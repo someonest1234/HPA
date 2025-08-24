@@ -1,216 +1,210 @@
-import React, { useMemo, useState, useEffect } from "react";
-import { motion, AnimatePresence } from "framer-motion";
-import { AlertTriangle, Clock, ChevronDown, ChevronRight, Package2, RefreshCw, ShieldAlert, Sparkles, Search } from "lucide-react";
-import { ExternalLink } from "lucide-react";
+import './index.css'
+import React, { useMemo, useState, useEffect } from 'react'
+import { motion, AnimatePresence } from 'framer-motion'
+import {
+  Clock,
+  ChevronDown,
+  ChevronRight,
+  Package2,
+  RefreshCw,
+  ShieldAlert,
+  Sparkles,
+  Search,
+  ExternalLink,
+  Trash2,
+} from 'lucide-react'
 
 /**
- * HYBRID PARCEL TRACKER – MVP SEED
+ * HYBRID PARCEL TRACKER – MVP (FULL FILE)
  * ---------------------------------------------------------
- * Goals
- *  - Show BOTH process phase and raw scan timeline (data = UX)
- *  - Detect reversals/stalls and surface as alerts (transparency)
- *  - Provide a simple card UI with an expandable raw log
- *  - Include a confidence score derived from (scan fidelity vs. inference)
- *
- * How to use in CursorAI:
- *  - Drop this file into a React + Tailwind project
- *  - Ensure tailwind is configured; this uses utility classes only
- *  - No external data needed; dummy data lives below
+ * Clean, single-file React + Tailwind UI with:
+ * - Add tracking (tracking #, carrier, title, optional tracking URL)
+ * - Auto-detect carrier from tracking number (TBA/AMZN = Amazon, digits = DPD, etc.)
+ * - Search box (filters carrier/title/tracking)
+ * - Paste email text → Extract tracking numbers → Add selected
+ * - Card view with confidence, anomaly alerts, raw scan timeline
+ * - Delete button per card
+ * - Local persistence via localStorage (key: `hpa.parcels`)
  */
 
-/**
- * Domain Model (dummy schema)
- * ---------------------------------------------------------
- * Parcel {
- *   id: string
- *   carrier: "DPD" | "UPS" | "USPS" | "AnPost" | string
- *   trackingNumber: string
- *   title?: string                    // optional user label
- *   scans: ScanEvent[]                // verbatim courier events (truth layer)
- *   inferredPhase: Phase              // current inferred process state
- *   lastUpdated: string               // ISO
- *   eta?: string                      // optional ETA from carrier or model
- * }
- *
- * ScanEvent {
- *   ts: string                        // ISO timestamp
- *   location?: string
- *   code?: string                     // courier code if available
- *   message: string                   // exact courier text
- *   phaseHint?: Phase                 // optional hint mapping
- * }
- *
- * Phase =
- *  "Label Created" | "In Transit" | "At Customs" | "Customs Cleared" |
- *  "Held by Customs" | "Out for Delivery" | "Delivered" | "Exception" | "Unknown"
- */
+// ------------------- Types -------------------
+
+type Phase =
+  | 'Label Created'
+  | 'In Transit'
+  | 'At Customs'
+  | 'Customs Cleared'
+  | 'Held by Customs'
+  | 'Out for Delivery'
+  | 'Delivered'
+  | 'Exception'
+  | 'Unknown'
+
+type ScanEvent = {
+  ts: string
+  location?: string
+  code?: string
+  message: string
+  phaseHint?: Phase
+}
+
+type Parcel = {
+  id: string
+  carrier: string
+  trackingNumber: string
+  title?: string
+  trackingUrl?: string
+  scans: ScanEvent[]
+  inferredPhase: Phase
+  lastUpdated: string
+  eta?: string
+}
 
 // ------------------- Dummy Fixtures -------------------
 
 const FIXTURES: Parcel[] = [
   {
-    id: "p1",
-    carrier: "DPD",
-    trackingNumber: "DPD-IE-123456789",
-    title: "ThinkPad T490 (refurb)",
+    id: 'p1',
+    carrier: 'DPD',
+    trackingNumber: '123456789012',
+    title: 'Headphones',
     scans: [
-      { ts: "2025-08-20T08:12:00Z", location: "DE Hamburg Hub", code: "DEP_IN", message: "Parcel collected from sender", phaseHint: "In Transit" },
-      { ts: "2025-08-21T04:02:00Z", location: "IE Athlone", code: "CUST_ARR", message: "Arrived at customs facility", phaseHint: "At Customs" },
-      { ts: "2025-08-21T12:33:00Z", location: "IE Athlone", code: "CUST_CLR", message: "Released by customs (green lane)", phaseHint: "Customs Cleared" },
-      // Reversal (pulled back)
-      { ts: "2025-08-22T10:41:00Z", location: "IE Athlone", code: "CUST_HOLD", message: "Selected for inspection. Clearance pending.", phaseHint: "Held by Customs" },
+      { ts: '2025-08-22T08:20:00Z', message: 'Shipment information received', phaseHint: 'Label Created' },
+      { ts: '2025-08-22T12:00:00Z', message: 'Departed facility - Cologne, DE', location: 'Cologne, DE', phaseHint: 'In Transit' },
+      { ts: '2025-08-23T07:00:00Z', message: 'Arrived at sortation hub - Dublin, IE', location: 'Dublin, IE', phaseHint: 'In Transit' },
     ],
-    inferredPhase: "Held by Customs",
-    lastUpdated: "2025-08-22T10:41:00Z",
-    eta: undefined,
+    inferredPhase: 'In Transit',
+    lastUpdated: '2025-08-23T07:00:00Z',
+    eta: '2025-08-25T18:00:00Z',
   },
   {
-    id: "p2",
-    carrier: "Amazon Logistics",
-    trackingNumber: "AMZ-IE-987654321",
-    title: "USB-C 240W Cable",
+    id: 'p2',
+    carrier: 'Amazon Logistics',
+    trackingNumber: 'TBA123456789',
+    title: 'USB-C Cable',
+    trackingUrl: 'https://www.amazon.ie/progress-tracker/package?trackingId=TBA123456789',
     scans: [
-      { ts: "2025-08-23T07:00:00Z", location: "IE Dublin", code: "FC_DISP", message: "Package departed Amazon facility", phaseHint: "In Transit" },
-      { ts: "2025-08-23T12:12:00Z", location: "IE Dublin", code: "DST_SORT", message: "Arrived at carrier facility", phaseHint: "In Transit" },
-      { ts: "2025-08-24T07:31:00Z", location: "IE Dublin", code: "OUT_DRV", message: "Out for delivery", phaseHint: "Out for Delivery" },
+      { ts: '2025-08-23T09:00:00Z', message: 'Cleared customs', phaseHint: 'Customs Cleared' },
+      { ts: '2025-08-23T16:00:00Z', message: 'Held for random inspection', phaseHint: 'Held by Customs' },
     ],
-    inferredPhase: "Out for Delivery",
-    lastUpdated: "2025-08-24T07:31:00Z",
-    eta: "2025-08-24T17:00:00Z",
+    inferredPhase: 'Held by Customs',
+    lastUpdated: '2025-08-23T16:00:00Z',
   },
-  {
-    id: "p3",
-    carrier: "An Post",
-    trackingNumber: "ANP-IE-555111222",
-    title: "Notebook Stand",
-    scans: [
-      { ts: "2025-08-18T09:22:00Z", location: "IE Portlaoise", code: "SORT_ARR", message: "Arrived at sorting center", phaseHint: "In Transit" },
-      { ts: "2025-08-19T14:02:00Z", location: "IE Portlaoise", code: "SORT_DEP", message: "Departed sorting center", phaseHint: "In Transit" },
-      { ts: "2025-08-19T18:45:00Z", location: "IE Dublin", code: "DLVD", message: "Delivered", phaseHint: "Delivered" },
-    ],
-    inferredPhase: "Delivered",
-    lastUpdated: "2025-08-19T18:45:00Z",
-    eta: "2025-08-19T18:00:00Z",
-  },
-];
-
-// ------------------- Types -------------------
-
-type Phase =
-  | "Label Created"
-  | "In Transit"
-  | "At Customs"
-  | "Customs Cleared"
-  | "Held by Customs"
-  | "Out for Delivery"
-  | "Delivered"
-  | "Exception"
-  | "Unknown";
-
-type ScanEvent = {
-  ts: string;
-  location?: string;
-  code?: string;
-  message: string;
-  phaseHint?: Phase;
-};
-
-type Parcel = {
-  id: string;
-  carrier: string;
-  trackingNumber: string;
-  title?: string;
-  trackingUrl?: string;
-  scans: ScanEvent[];
-  inferredPhase: Phase;
-  lastUpdated: string;
-  eta?: string;
-};
+]
 
 // ------------------- Helpers / Logic -------------------
 
 function formatDT(iso?: string) {
-  if (!iso) return "—";
+  if (!iso) return '—'
   try {
-    const d = new Date(iso);
-    return d.toLocaleString();
+    const d = new Date(iso)
+    return d.toLocaleString()
   } catch {
-    return iso ?? "—";
+    return iso ?? '—'
   }
 }
 
 function getLastScan(p: Parcel): ScanEvent | undefined {
-  return [...p.scans].sort((a, b) => +new Date(b.ts) - +new Date(a.ts))[0];
+  return [...p.scans].sort((a, b) => +new Date(b.ts) - +new Date(a.ts))[0]
 }
 
-/**
- * Anomaly detection
- * - Reversal: later scan indicates a more regressive phase than earlier scan (e.g., Cleared -> Hold)
- * - Stall: no scans in > X hours (default 48h) and phase not terminal
- */
-function detectAnomalies(p: Parcel, stallHours = 48) {
-  const scans = [...p.scans].sort((a, b) => +new Date(a.ts) - +new Date(b.ts));
-  const last = scans[scans.length - 1];
+// Heuristic carrier detection from tracking number
+function detectCarrierFromTracking(tn: string): { carrier: string } {
+  const s = tn.trim()
+  if (!s) return { carrier: 'Unknown' }
+  const U = s.toUpperCase()
+  if (/^TBA[A-Z0-9]+$/.test(U) || /^AMZN[0-9A-Z]+$/.test(U)) return { carrier: 'Amazon Logistics' }
+  if (/^1Z[0-9A-Z]+$/.test(U)) return { carrier: 'UPS' }
+  if (/^[A-Z]{2}\d{9}[A-Z]{2}$/.test(U) && U.endsWith('IE')) return { carrier: 'An Post' }
+  if (/^\d{10,14}$/.test(U)) return { carrier: 'DPD' }
+  return { carrier: 'Unknown' }
+}
 
-  // Map phase order for directional comparison
+// Extract tracking numbers (and optional URLs) from free text (e.g., emails)
+function extractCandidatesFromText(text: string): { trackingNumber: string; trackingUrl?: string }[] {
+  const found: Record<string, { trackingNumber: string; trackingUrl?: string }> = {}
+  const add = (tn: string, url?: string) => {
+    const key = tn.trim().toUpperCase()
+    if (!key) return
+    if (!found[key]) found[key] = { trackingNumber: tn.trim(), trackingUrl: url }
+  }
+  // URLs first (amazon share links often have ?trackingId=…)
+  for (const m of text.matchAll(/https?:\/\/[^\s)]+/gi)) {
+    const url = m[0]
+    try {
+      const u = new URL(url)
+      const qId = u.searchParams.get('trackingId') || u.searchParams.get('trackingNumber')
+      if (qId) add(qId, url)
+      const tba = u.pathname.match(/(TBA[A-Z0-9]+)/i)
+      if (tba) add(tba[1], url)
+    } catch {}
+  }
+  for (const m of text.matchAll(/\b(TBA[A-Z0-9]+|AMZN[0-9A-Z]+)\b/gi)) add(m[1]) // Amazon Logistics
+  for (const m of text.matchAll(/\b(1Z[0-9A-Z]+)\b/gi)) add(m[1]) // UPS
+  for (const m of text.matchAll(/\b([A-Z]{2}\d{9}[A-Z]{2})\b/g)) add(m[1]) // UPU (e.g., …IE)
+  for (const m of text.matchAll(/\b(\d{10,14})\b/g)) add(m[1]) // DPD-ish heuristic
+  return Object.values(found)
+}
+
+// Anomaly detection (reversal + stall)
+function detectAnomalies(p: Parcel, stallHours = 48) {
+  const scans = [...p.scans].sort((a, b) => +new Date(a.ts) - +new Date(b.ts))
+  const last = scans[scans.length - 1]
+
   const order: Record<Phase, number> = {
-    "Label Created": 0,
-    "In Transit": 1,
-    "At Customs": 2,
-    "Held by Customs": 3,
-    "Customs Cleared": 4,
-    "Out for Delivery": 5,
+    'Label Created': 0,
+    'In Transit': 1,
+    'At Customs': 2,
+    'Held by Customs': 3,
+    'Customs Cleared': 4,
+    'Out for Delivery': 5,
     Delivered: 6,
     Exception: 7,
     Unknown: 1,
-  };
+  }
 
-  let reversed = false;
+  let reversed = false
   for (let i = 1; i < scans.length; i++) {
-    const prev = scans[i - 1].phaseHint ?? "Unknown";
-    const curr = scans[i].phaseHint ?? "Unknown";
+    const prev = scans[i - 1].phaseHint ?? 'Unknown'
+    const curr = scans[i].phaseHint ?? 'Unknown'
     if (order[curr] < order[prev]) {
-      reversed = true;
-      break;
+      reversed = true
+      break
     }
   }
 
-  const terminal = p.inferredPhase === "Delivered" || p.inferredPhase === "Exception";
-  const hoursSinceLast = (Date.now() - +new Date(last?.ts ?? p.lastUpdated)) / 36e5;
-  const stalled = !terminal && hoursSinceLast > stallHours;
+  const terminal = p.inferredPhase === 'Delivered' || p.inferredPhase === 'Exception'
+  const hoursSinceLast = (Date.now() - +new Date(last?.ts ?? p.lastUpdated)) / 36e5
+  const stalled = !terminal && hoursSinceLast > stallHours
 
-  return { reversed, stalled, hoursSinceLast: Math.round(hoursSinceLast) };
+  return { reversed, stalled, hoursSinceLast: Math.round(hoursSinceLast) }
 }
 
-/** Confidence scoring
- * 0–100 from two signals:
- *  - last scan recency (freshness)
- *  - agreement between inferredPhase and last phaseHint
- */
+// Confidence score (0–100): recency + agreement with last hint
 function confidence(p: Parcel) {
-  const last = getLastScan(p);
-  const recencyHours = (Date.now() - +new Date(last?.ts ?? p.lastUpdated)) / 36e5;
-  const freshness = Math.max(0, 100 - Math.min(72, recencyHours) * (100 / 72)); // linear drop over 72h
-  const agree = (last?.phaseHint ?? "Unknown") === p.inferredPhase ? 100 : 50;
-  return Math.round(0.6 * freshness + 0.4 * agree);
+  const last = getLastScan(p)
+  const recencyHours = (Date.now() - +new Date(last?.ts ?? p.lastUpdated)) / 36e5
+  const freshness = Math.max(0, 100 - Math.min(72, recencyHours) * (100 / 72))
+  const agree = (last?.phaseHint ?? 'Unknown') === p.inferredPhase ? 100 : 50
+  return Math.round(0.6 * freshness + 0.4 * agree)
 }
 
 // ------------------- UI Components -------------------
 
 function PhaseBadge({ phase }: { phase: Phase }) {
   const color =
-    phase === "Delivered"
-      ? "bg-green-100 text-green-700 border-green-200"
-      : phase === "Out for Delivery"
-      ? "bg-emerald-100 text-emerald-700 border-emerald-200"
-      : phase === "Held by Customs" || phase === "Exception"
-      ? "bg-amber-100 text-amber-700 border-amber-200"
-      : phase === "Customs Cleared"
-      ? "bg-sky-100 text-sky-700 border-sky-200"
-      : phase === "At Customs"
-      ? "bg-blue-100 text-blue-700 border-blue-200"
-      : "bg-zinc-100 text-zinc-700 border-zinc-200";
-  return <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs ${color}`}>{phase}</span>;
+    phase === 'Delivered'
+      ? 'bg-green-100 text-green-700 border-green-200'
+      : phase === 'Out for Delivery'
+      ? 'bg-emerald-100 text-emerald-700 border-emerald-200'
+      : phase === 'Held by Customs' || phase === 'Exception'
+      ? 'bg-amber-100 text-amber-700 border-amber-200'
+      : phase === 'Customs Cleared'
+      ? 'bg-sky-100 text-sky-700 border-sky-200'
+      : phase === 'At Customs'
+      ? 'bg-blue-100 text-blue-700 border-blue-200'
+      : 'bg-zinc-100 text-zinc-700 border-zinc-200'
+  return <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs ${color}`}>{phase}</span>
 }
 
 function ConfidenceMeter({ value }: { value: number }) {
@@ -222,22 +216,22 @@ function ConfidenceMeter({ value }: { value: number }) {
       </div>
       <span className="text-xs tabular-nums text-zinc-600">{value}%</span>
     </div>
-  );
+  )
 }
 
 function AnomalyBadge({ reversed, stalled, hours }: { reversed: boolean; stalled: boolean; hours: number }) {
-  if (!reversed && !stalled) return null;
+  if (!reversed && !stalled) return null
   return (
     <div className="flex items-center gap-2 text-amber-700">
       <ShieldAlert className="h-4 w-4" />
-      <span className="text-xs font-medium">{reversed ? "Status reversal detected" : "Potential stall"}</span>
+      <span className="text-xs font-medium">{reversed ? 'Status reversal detected' : 'Potential stall'}</span>
       {stalled && <span className="text-xs text-amber-600">{hours}h since last scan</span>}
     </div>
-  );
+  )
 }
 
 function ScanTimeline({ scans }: { scans: ScanEvent[] }) {
-  const ordered = [...scans].sort((a, b) => +new Date(b.ts) - +new Date(a.ts));
+  const ordered = [...scans].sort((a, b) => +new Date(b.ts) - +new Date(a.ts))
   return (
     <ul className="space-y-3">
       {ordered.map((s, i) => (
@@ -257,14 +251,14 @@ function ScanTimeline({ scans }: { scans: ScanEvent[] }) {
         </li>
       ))}
     </ul>
-  );
+  )
 }
 
-function ParcelCard({ parcel }: { parcel: Parcel }) {
-  const [open, setOpen] = useState(false);
-  const last = getLastScan(parcel);
-  const anom = detectAnomalies(parcel, 48);
-  const conf = confidence(parcel);
+function ParcelCard({ parcel, onDelete }: { parcel: Parcel; onDelete: (id: string) => void }) {
+  const [open, setOpen] = useState(false)
+  const last = getLastScan(parcel)
+  const anom = detectAnomalies(parcel, 48)
+  const conf = confidence(parcel)
 
   return (
     <div className="rounded-2xl border border-zinc-200 bg-white shadow-sm p-4 md:p-5">
@@ -286,6 +280,7 @@ function ParcelCard({ parcel }: { parcel: Parcel }) {
         <div className="flex flex-col items-end gap-2 min-w-[200px]">
           <ConfidenceMeter value={conf} />
           <AnomalyBadge reversed={anom.reversed} stalled={anom.stalled} hours={anom.hoursSinceLast} />
+
           {parcel.trackingUrl && (
             <a
               href={parcel.trackingUrl}
@@ -297,14 +292,27 @@ function ParcelCard({ parcel }: { parcel: Parcel }) {
               <ExternalLink className="h-3 w-3" /> Open tracking
             </a>
           )}
+
+          <button
+            type="button"
+            onClick={() => {
+              if (confirm('Delete this parcel?')) onDelete(parcel.id)
+            }}
+            className="inline-flex items-center gap-1 rounded-md border border-red-300 bg-white px-2 py-1 text-xs text-red-700 hover:bg-red-50"
+            title="Delete parcel"
+          >
+            <Trash2 className="h-3 w-3" /> Delete
+          </button>
         </div>
       </div>
 
       <div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-3 text-sm text-zinc-700">
         <div className="rounded-lg bg-zinc-50 border border-zinc-200 p-3">
           <div className="text-xs text-zinc-500">Last scan</div>
-          <div className="font-medium">{last?.message ?? "—"}</div>
-          <div className="text-xs text-zinc-600 mt-1">{formatDT(last?.ts)} {last?.location ? `• ${last.location}` : ""}</div>
+          <div className="font-medium">{last?.message ?? '—'}</div>
+          <div className="text-xs text-zinc-600 mt-1">
+            {formatDT(last?.ts)} {last?.location ? `• ${last.location}` : ''}
+          </div>
         </div>
         <div className="rounded-lg bg-zinc-50 border border-zinc-200 p-3">
           <div className="text-xs text-zinc-500">Process state</div>
@@ -328,7 +336,7 @@ function ParcelCard({ parcel }: { parcel: Parcel }) {
         {open && (
           <motion.div
             initial={{ height: 0, opacity: 0 }}
-            animate={{ height: "auto", opacity: 1 }}
+            animate={{ height: 'auto', opacity: 1 }}
             exit={{ height: 0, opacity: 0 }}
             className="overflow-hidden"
           >
@@ -339,55 +347,68 @@ function ParcelCard({ parcel }: { parcel: Parcel }) {
         )}
       </AnimatePresence>
     </div>
-  );
+  )
 }
 
+// ------------------- App -------------------
+
 export default function App() {
-  const [q, setQ] = useState("");
+  const [q, setQ] = useState('')
 
   // Persisted parcels (localStorage) + seed with FIXTURES on first load
   const [parcels, setParcels] = useState<Parcel[]>(() => {
     try {
-      const saved = localStorage.getItem("hpa.parcels");
-      return saved ? (JSON.parse(saved) as Parcel[]) : FIXTURES;
+      const saved = localStorage.getItem('hpa.parcels')
+      return saved ? (JSON.parse(saved) as Parcel[]) : FIXTURES
     } catch {
-      return FIXTURES;
+      return FIXTURES
     }
-  });
+  })
   useEffect(() => {
     try {
-      localStorage.setItem("hpa.parcels", JSON.stringify(parcels));
+      localStorage.setItem('hpa.parcels', JSON.stringify(parcels))
     } catch {}
-  }, [parcels]);
+  }, [parcels])
 
   // New parcel form state
-  type NewParcel = { trackingNumber: string; carrier: string; title: string; trackingUrl: string };
-  const [newP, setNewP] = useState<NewParcel>({ trackingNumber: "", carrier: "", title: "", trackingUrl: "" });
+  type NewParcel = { trackingNumber: string; carrier: string; title: string; trackingUrl: string }
+  const [newP, setNewP] = useState<NewParcel>({ trackingNumber: '', carrier: '', title: '', trackingUrl: '' })
+  const [carrierTouched, setCarrierTouched] = useState(false)
 
   function addParcel(e: React.FormEvent) {
-    e.preventDefault();
-    const tn = newP.trackingNumber.trim();
-    if (!tn) return;
+    e.preventDefault()
+    const tn = newP.trackingNumber.trim()
+    if (!tn) return
     const np: Parcel = {
       id: `p${Date.now()}`,
-      carrier: newP.carrier.trim() || "Unknown",
+      carrier: newP.carrier.trim() || 'Unknown',
       trackingNumber: tn,
       title: newP.title.trim() || undefined,
       trackingUrl: newP.trackingUrl.trim() || undefined,
       scans: [],
-      inferredPhase: "Unknown",
+      inferredPhase: 'Unknown',
       lastUpdated: new Date().toISOString(),
       eta: undefined,
-    };
-    setParcels([np, ...parcels]);
-    setNewP({ trackingNumber: "", carrier: "", title: "", trackingUrl: "" });
-    setQ("");
+    }
+    setParcels([np, ...parcels])
+    setNewP({ trackingNumber: '', carrier: '', title: '', trackingUrl: '' })
+    setCarrierTouched(false)
+    setQ('')
+  }
+
+  function handleDelete(id: string) {
+    setParcels((prev) => prev.filter((p) => p.id !== id))
   }
 
   const filtered = useMemo(() => {
-    const needle = q.toLowerCase();
-    return parcels.filter((p) => `${p.title ?? ""} ${p.carrier} ${p.trackingNumber}`.toLowerCase().includes(needle));
-  }, [parcels, q]);
+    const needle = q.toLowerCase()
+    return parcels.filter((p) => `${p.title ?? ''} ${p.carrier} ${p.trackingNumber}`.toLowerCase().includes(needle))
+  }, [parcels, q])
+
+  // Extractor state
+  const [pasteText, setPasteText] = useState('')
+  const [extracted, setExtracted] = useState<{ trackingNumber: string; trackingUrl?: string }[]>([])
+  const [selected, setSelected] = useState<Record<string, boolean>>({})
 
   return (
     <div className="min-h-screen bg-zinc-100 p-4 md:p-8">
@@ -409,14 +430,24 @@ export default function App() {
         <form onSubmit={addParcel} className="grid gap-3 rounded-2xl border border-zinc-300 bg-white p-3 shadow-sm md:grid-cols-5">
           <input
             value={newP.trackingNumber}
-            onChange={(e) => setNewP({ ...newP, trackingNumber: e.target.value })}
+            onChange={(e) => {
+              const tracking = e.target.value
+              setNewP((prev) => {
+                const guess = detectCarrierFromTracking(tracking).carrier
+                const nextCarrier = prev.carrier?.trim() ? prev.carrier : guess !== 'Unknown' ? guess : ''
+                return { ...prev, trackingNumber: tracking, carrier: nextCarrier }
+              })
+            }}
             placeholder="Tracking number*"
             className="rounded-lg border border-zinc-300 bg-transparent px-3 py-2 text-sm outline-none"
             required
           />
           <input
             value={newP.carrier}
-            onChange={(e) => setNewP({ ...newP, carrier: e.target.value })}
+            onChange={(e) => {
+              setCarrierTouched(true)
+              setNewP({ ...newP, carrier: e.target.value })
+            }}
             placeholder="Carrier (optional)"
             className="rounded-lg border border-zinc-300 bg-transparent px-3 py-2 text-sm outline-none"
           />
@@ -451,9 +482,87 @@ export default function App() {
           />
         </div>
 
+        {/* Paste email text → extract tracking numbers */}
+        <div className="rounded-2xl border border-zinc-300 bg-white p-3 shadow-sm space-y-3">
+          <div className="text-sm font-medium">Paste email text to extract tracking numbers</div>
+          <textarea
+            value={pasteText}
+            onChange={(e) => setPasteText(e.target.value)}
+            placeholder="Paste Amazon/DPD email or tracking page text here..."
+            className="w-full h-28 resize-vertical rounded-lg border border-zinc-300 bg-transparent px-3 py-2 text-sm outline-none"
+          />
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                const cands = extractCandidatesFromText(pasteText)
+                const existing = new Set(parcels.map((p) => p.trackingNumber.toUpperCase()))
+                const fresh = cands.filter((c) => !existing.has(c.trackingNumber.toUpperCase()))
+                setExtracted(fresh)
+                const sel: Record<string, boolean> = {}
+                fresh.forEach((c) => (sel[c.trackingNumber.toUpperCase()] = true))
+                setSelected(sel)
+              }}
+              className="inline-flex items-center gap-2 rounded-lg bg-zinc-900 px-3 py-2 text-sm font-medium text-white hover:bg-zinc-800"
+            >
+              Extract
+            </button>
+            {extracted.length > 0 && (
+              <button
+                type="button"
+                onClick={() => {
+                  const toAdd = extracted.filter((c) => selected[c.trackingNumber.toUpperCase()])
+                  if (toAdd.length === 0) return
+                  const added: Parcel[] = toAdd.map((c) => ({
+                    id: `p${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+                    carrier: detectCarrierFromTracking(c.trackingNumber).carrier,
+                    trackingNumber: c.trackingNumber,
+                    title: undefined,
+                    trackingUrl: c.trackingUrl,
+                    scans: [],
+                    inferredPhase: 'Unknown',
+                    lastUpdated: new Date().toISOString(),
+                    eta: undefined,
+                  }))
+                  setParcels((prev) => [...added, ...prev])
+                  setExtracted([])
+                  setSelected({})
+                  setPasteText('')
+                }}
+                className="inline-flex items-center gap-2 rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm font-medium text-zinc-900 hover:bg-zinc-50"
+              >
+                Add selected ({Object.values(selected).filter(Boolean).length})
+              </button>
+            )}
+          </div>
+
+          {extracted.length > 0 && (
+            <div className="space-y-2">
+              {extracted.map((c) => (
+                <label key={c.trackingNumber} className="flex items-center gap-3 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={!!selected[c.trackingNumber.toUpperCase()]}
+                    onChange={(e) =>
+                      setSelected((prev) => ({ ...prev, [c.trackingNumber.toUpperCase()]: e.target.checked }))
+                    }
+                  />
+                  <span className="font-mono">{c.trackingNumber}</span>
+                  <span className="text-zinc-500">• {detectCarrierFromTracking(c.trackingNumber).carrier}</span>
+                  {c.trackingUrl && (
+                    <a href={c.trackingUrl} target="_blank" rel="noopener noreferrer" className="text-zinc-700 underline">
+                      link
+                    </a>
+                  )}
+                </label>
+              ))}
+            </div>
+          )}
+        </div>
+
         <div className="grid gap-4">
           {filtered.map((p) => (
-            <ParcelCard key={p.id} parcel={p} />
+            <ParcelCard key={p.id} parcel={p} onDelete={handleDelete} />
           ))}
           {filtered.length === 0 && (
             <div className="text-center text-zinc-600 py-10">No parcels match your search.</div>
@@ -471,5 +580,5 @@ export default function App() {
         </footer>
       </div>
     </div>
-  );
+  )
 }
