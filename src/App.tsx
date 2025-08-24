@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useMemo, useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { AlertTriangle, Clock, ChevronDown, ChevronRight, Package2, RefreshCw, ShieldAlert, Sparkles, Search } from "lucide-react";
 
@@ -331,11 +331,49 @@ function ParcelCard({ parcel }: { parcel: Parcel }) {
 
 export default function App() {
   const [q, setQ] = useState("");
-  const parcels = useMemo(() => FIXTURES, []);
-  const filtered = parcels.filter((p) => {
-    const hay = `${p.title} ${p.carrier} ${p.trackingNumber}`.toLowerCase();
-    return hay.includes(q.toLowerCase());
+
+  // Persisted parcels (localStorage) + seed with FIXTURES on first load
+  const [parcels, setParcels] = useState<Parcel[]>(() => {
+    try {
+      const saved = localStorage.getItem("hpa.parcels");
+      return saved ? (JSON.parse(saved) as Parcel[]) : FIXTURES;
+    } catch {
+      return FIXTURES;
+    }
   });
+  useEffect(() => {
+    try {
+      localStorage.setItem("hpa.parcels", JSON.stringify(parcels));
+    } catch {}
+  }, [parcels]);
+
+  // New parcel form state
+  type NewParcel = { trackingNumber: string; carrier: string; title: string };
+  const [newP, setNewP] = useState<NewParcel>({ trackingNumber: "", carrier: "", title: "" });
+
+  function addParcel(e: React.FormEvent) {
+    e.preventDefault();
+    const tn = newP.trackingNumber.trim();
+    if (!tn) return;
+    const np: Parcel = {
+      id: `p${Date.now()}`,
+      carrier: newP.carrier.trim() || "Unknown",
+      trackingNumber: tn,
+      title: newP.title.trim() || undefined,
+      scans: [],
+      inferredPhase: "Unknown",
+      lastUpdated: new Date().toISOString(),
+      eta: undefined,
+    };
+    setParcels([np, ...parcels]);
+    setNewP({ trackingNumber: "", carrier: "", title: "" });
+    setQ("");
+  }
+
+  const filtered = useMemo(() => {
+    const needle = q.toLowerCase();
+    return parcels.filter((p) => `${p.title ?? ""} ${p.carrier} ${p.trackingNumber}`.toLowerCase().includes(needle));
+  }, [parcels, q]);
 
   return (
     <div className="min-h-screen bg-zinc-100 p-4 md:p-8">
@@ -353,6 +391,36 @@ export default function App() {
           </button>
         </header>
 
+        {/* Add Tracking Number form */}
+        <form onSubmit={addParcel} className="grid gap-3 rounded-2xl border border-zinc-300 bg-white p-3 shadow-sm md:grid-cols-4">
+          <input
+            value={newP.trackingNumber}
+            onChange={(e) => setNewP({ ...newP, trackingNumber: e.target.value })}
+            placeholder="Tracking number*"
+            className="rounded-lg border border-zinc-300 bg-transparent px-3 py-2 text-sm outline-none"
+            required
+          />
+          <input
+            value={newP.carrier}
+            onChange={(e) => setNewP({ ...newP, carrier: e.target.value })}
+            placeholder="Carrier (optional)"
+            className="rounded-lg border border-zinc-300 bg-transparent px-3 py-2 text-sm outline-none"
+          />
+          <input
+            value={newP.title}
+            onChange={(e) => setNewP({ ...newP, title: e.target.value })}
+            placeholder="Label (optional)"
+            className="rounded-lg border border-zinc-300 bg-transparent px-3 py-2 text-sm outline-none"
+          />
+          <button
+            type="submit"
+            className="inline-flex items-center justify-center gap-2 rounded-lg bg-zinc-900 px-3 py-2 text-sm font-medium text-white hover:bg-zinc-800"
+          >
+            <Package2 className="h-4 w-4" /> Add
+          </button>
+        </form>
+
+        {/* Search box */}
         <div className="flex items-center gap-2 rounded-2xl border border-zinc-300 bg-white px-3 py-2 shadow-sm">
           <Search className="h-4 w-4 text-zinc-500" />
           <input
