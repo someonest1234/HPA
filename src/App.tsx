@@ -1,6 +1,7 @@
 import React, { useMemo, useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { AlertTriangle, Clock, ChevronDown, ChevronRight, Package2, RefreshCw, ShieldAlert, Sparkles, Search } from "lucide-react";
+import { ExternalLink } from "lucide-react";
 
 /**
  * HYBRID PARCEL TRACKER – MVP SEED
@@ -119,6 +120,7 @@ type Parcel = {
   carrier: string;
   trackingNumber: string;
   title?: string;
+  trackingUrl?: string;
   scans: ScanEvent[];
   inferredPhase: Phase;
   lastUpdated: string;
@@ -281,9 +283,20 @@ function ParcelCard({ parcel }: { parcel: Parcel }) {
             </div>
           </div>
         </div>
-        <div className="flex flex-col items-end gap-2 min-w-[180px]">
+        <div className="flex flex-col items-end gap-2 min-w-[200px]">
           <ConfidenceMeter value={conf} />
           <AnomalyBadge reversed={anom.reversed} stalled={anom.stalled} hours={anom.hoursSinceLast} />
+          {parcel.trackingUrl && (
+            <a
+              href={parcel.trackingUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 rounded-md border border-zinc-300 bg-white px-2 py-1 text-xs text-zinc-800 hover:bg-zinc-50"
+              title="Open official tracking page"
+            >
+              <ExternalLink className="h-3 w-3" /> Open tracking
+            </a>
+          )}
         </div>
       </div>
 
@@ -348,8 +361,8 @@ export default function App() {
   }, [parcels]);
 
   // New parcel form state
-  type NewParcel = { trackingNumber: string; carrier: string; title: string };
-  const [newP, setNewP] = useState<NewParcel>({ trackingNumber: "", carrier: "", title: "" });
+  type NewParcel = { trackingNumber: string; carrier: string; title: string; trackingUrl: string };
+  const [newP, setNewP] = useState<NewParcel>({ trackingNumber: "", carrier: "", title: "", trackingUrl: "" });
 
   function addParcel(e: React.FormEvent) {
     e.preventDefault();
@@ -360,13 +373,14 @@ export default function App() {
       carrier: newP.carrier.trim() || "Unknown",
       trackingNumber: tn,
       title: newP.title.trim() || undefined,
+      trackingUrl: newP.trackingUrl.trim() || undefined,
       scans: [],
       inferredPhase: "Unknown",
       lastUpdated: new Date().toISOString(),
       eta: undefined,
     };
     setParcels([np, ...parcels]);
-    setNewP({ trackingNumber: "", carrier: "", title: "" });
+    setNewP({ trackingNumber: "", carrier: "", title: "", trackingUrl: "" });
     setQ("");
   }
 
@@ -392,7 +406,7 @@ export default function App() {
         </header>
 
         {/* Add Tracking Number form */}
-        <form onSubmit={addParcel} className="grid gap-3 rounded-2xl border border-zinc-300 bg-white p-3 shadow-sm md:grid-cols-4">
+        <form onSubmit={addParcel} className="grid gap-3 rounded-2xl border border-zinc-300 bg-white p-3 shadow-sm md:grid-cols-5">
           <input
             value={newP.trackingNumber}
             onChange={(e) => setNewP({ ...newP, trackingNumber: e.target.value })}
@@ -410,6 +424,12 @@ export default function App() {
             value={newP.title}
             onChange={(e) => setNewP({ ...newP, title: e.target.value })}
             placeholder="Label (optional)"
+            className="rounded-lg border border-zinc-300 bg-transparent px-3 py-2 text-sm outline-none"
+          />
+          <input
+            value={newP.trackingUrl}
+            onChange={(e) => setNewP({ ...newP, trackingUrl: e.target.value })}
+            placeholder="Amazon share link (optional)"
             className="rounded-lg border border-zinc-300 bg-transparent px-3 py-2 text-sm outline-none"
           />
           <button
